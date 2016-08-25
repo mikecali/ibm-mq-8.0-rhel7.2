@@ -1,0 +1,5 @@
+---
+ansible_user: rhel 
+mqm_user: mqm
+default_qmgr: IBMMQ
+repo_url: http://repo.alabs.datacom.co.nz:/repo/ISO/IBM/MQ/8.0/MQServer/

@@ -1,0 +1,2 @@
+#Alter SYSTEM.DEFAULT.LOCAL.QUEUE DEFPSIST to be Yes so all queues are persistent by default
+ALTER QLOCAL (SYSTEM.DEFAULT.LOCAL.QUEUE) DEFPSIST(YES)

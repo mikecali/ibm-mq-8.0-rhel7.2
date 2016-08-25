@@ -1,0 +1,15 @@
+#Disable all incoming system channels
+echo "alter channel('SYSTEM.AUTO.RECEIVER') chltype(rcvr) +
+  mcauser('*NOACCESS') maxmsgl(1)
+alter channel('SYSTEM.AUTO.SVRCONN') chltype(svrconn) +
+  mcauser('*NOACCESS') maxmsgl(1)
+alter channel('SYSTEM.DEF.CLUSRCVR') chltype(clusrcvr) +
+  mcauser('*NOACCESS') maxmsgl(1)
+alter channel('SYSTEM.DEF.RECEIVER') chltype(rcvr) +
+  mcauser('*NOACCESS') maxmsgl(1)
+alter channel('SYSTEM.DEF.REQUESTER') chltype(rqstr) +
+  mcauser('*NOACCESS') maxmsgl(1)
+alter channel('SYSTEM.DEF.SERVER') chltype(svr) +
+  mcauser('*NOACCESS') maxmsgl(1)
+alter channel('SYSTEM.DEF.SVRCONN') chltype(svrconn) +
+  mcauser('*NOACCESS') maxmsgl(1)

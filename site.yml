@@ -1,0 +1,157 @@
+---
+# This playbook deploys a IBMMQ server to RHEL7.2  server. 
+
+- hosts: all 
+  gather_facts: True
+  become: True
+
+  vars_files:
+    - vars.yml
+
+  pre_tasks:
+    - name: upgrade all packages
+      yum: name=* state=latest update_cache=yes
+
+    - name: Install Required packages
+      action: "{{ ansible_pkg_mgr }} name={{item}} state=present"
+      with_items:
+        - bc
+        - vim
+
+    - name: Set sysctl file-max
+      sysctl: name=fs.file-max value=524288 state=present
+
+    - name: Add or modify nofile and nproc limits for the mq user
+      pam_limits: domain={{item.user}} limit_type={{item.type}} limit_item={{item.name}} value={{item.value}}
+      with_items:
+        - {user: "{{mqm_user}}", type: 'soft', name: 'nofile', value: '10240'}
+        - {user: "{{mqm_user}}", type: 'hard', name: 'nofile', value: '10240'}
+        - {user: "{{mqm_user}}", type: 'soft', name: 'nproc', value: '4096'}
+        - {user: "{{mqm_user}}", type: 'soft', name: 'nproc', value: '4096'}
+
+  tasks:
+    - name: create mqm group
+      group: name={{mqm_user}} state=present
+
+    - name: create mqm user
+      user: name={{mqm_user}} state=present shell=/bin/bash group={{mqm_user}}
+
+#    - name: Mount NFS Location of MQ rpms
+#      mount:
+#        name: /mnt/
+#        src: repo.alabs.datacom.co.nz:/repo/ISO
+#        fstype: nfs
+#        state: mounted
+
+    - name: add installer directory
+      file:
+        state: directory
+        path: /tmp/MQinstallers/
+
+    - name: Get the installer
+      get_url: 
+        url: "http://repo.alabs.datacom.co.nz/repo/ISO/IBM/MQ/8.0/MQServer/{{ item }}"
+        dest: /tmp/MQinstallers/
+      with_items:
+        - MQSeriesRuntime-8.0.0-4.x86_64.rpm
+        - MQSeriesServer-8.0.0-4.x86_64.rpm
+        - MQSeriesJRE-8.0.0-4.x86_64.rpm
+        - MQSeriesGSKit-8.0.0-4.x86_64.rpm
+        - MQSeriesSamples-8.0.0-4.x86_64.rpm
+        - MQSeriesJava-8.0.0-4.x86_64.rpm
+
+    - name: Get MQ lic file 
+      get_url:
+        url: "http://repo.alabs.datacom.co.nz/repo/ISO/IBM/MQ/8.0/MQServer/{{ item }}"
+        dest: /home/mqm/
+        mode: 0755
+      with_items:
+        - mqlicense.sh    
+
+    - name: Have we accepted the licence already?
+      stat: path=/tmp/mq_license_8.0.0/license/status.dat
+      register: licence
+
+    - name: Accept IBM Licence
+      command: /home/mqm/mqlicense.sh -accept
+      when: licence.stat.islnk is not defined
+      become: yes
+
+    - name: Install MQServer packages.
+      yum:
+        name: "{{item}}"
+        state: present
+      with_items:
+        - /tmp/MQinstallers/MQSeriesRuntime-8.0.0-4.x86_64.rpm
+        - /tmp/MQinstallers/MQSeriesServer-8.0.0-4.x86_64.rpm
+        - /tmp/MQinstallers/MQSeriesJRE-8.0.0-4.x86_64.rpm
+        - /tmp/MQinstallers/MQSeriesGSKit-8.0.0-4.x86_64.rpm
+        - /tmp/MQinstallers/MQSeriesSamples-8.0.0-4.x86_64.rpm
+        - /tmp/MQinstallers/MQSeriesJava-8.0.0-4.x86_64.rpm
+
+
+    - name: download verifyMQInstallation script from udmgitlab
+      get_url: 
+        url: https://udmgitlab.datacom.co.nz/byron/byronc/raw/master/verifyMQinstallation.sh 
+        dest: /home/{{mqm_user}} 
+        owner: "{{mqm_user}}"
+        mode: u+rwx,g+rx,o-rwx
+        validate_certs: False
+
+    - name: Execute verifyMQinstallation
+      become_user: "{{mqm_user}}"
+      command: /home/mqm/verifyMQinstallation.sh
+
+    - name: Update .bashrc for user mqm
+      blockinfile:
+        dest: /home/mqm/.bashrc
+        owner: "{{mqm_user}}"
+        group: "{{mqm_user}}"
+        block: |
+          #Configure MQ Environment
+          PATH=$PATH:$HOME/bin:/sbin:/opt/mqm/bin
+          export PATH
+ 
+          # Set MQ environment
+          source /opt/mqm/bin/setmqenv -s
+          #Default Queue Manager
+          QMGR="{{default_qmgr}}"
+          export QMGR
+
+    - name: Check if the default qmgr has been previously created
+      command: /opt/mqm/bin/dspmq -m "{{default_qmgr}}"
+      register: dspmq
+      ignore_errors: True
+
+    - name: Create default QMGR
+      become_user: "{{mqm_user}}"
+      command: /opt/mqm/bin/crtmqm -u SYSTEM.DEAD.LETTER.QUEUE -lc -lp 2 -ls 100 "{{default_qmgr}}"
+      when: dspmq.stderr.find('The queue manager name is either not valid or not known') != - 1
+
+    - name: Check if the default qmgr has been previously created but not running
+      become_user: "{{mqm_user}}"
+      command: /opt/mqm/bin/dspmq -m "{{default_qmgr}}"
+      register: dspmq
+      ignore_errors: True
+
+    - name: Start default QMGR
+      become_user: "{{mqm_user}}"
+      command: /opt/mqm/bin/strmqm "{{default_qmgr}}"
+      when: dspmq.stdout.find('Ended') != -1
+
+
+ 
+    - name: create Administration Access
+      template:
+        src=mq-setup/create-listener-for-administration-access.j2 
+        dest="/home/mqm/create-admin-listener"
+        owner="{{ mqm_user }}"
+        group="{{ mqm_user }}"
+        mode=0644
+      register: script_created
+ 
+    - name: create deployment environment
+      become_user: "{{mqm_user}}"
+      shell: /usr/bin/cat /home/mqm/create-admin-listener | /opt/mqm/bin/runmqsc {{default_qmgr}}
+      register: created_admin_listener
+      when: script_created|changed
